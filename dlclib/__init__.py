@@ -22,4 +22,13 @@
 # SOFTWARE.
 #
 
-VERSION_STR = "1.0.0"
+VERSION_STR = "1.0.1"
+
+from ruamel.yaml import YAML as _YAML
+_yaml = _YAML(typ="safe")
+
+def load_config(cfgpath):
+    with open(cfgpath) as src:
+        return _yaml.load(src)
+
+from . import estimate, posture

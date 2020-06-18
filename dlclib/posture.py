@@ -28,7 +28,7 @@ from collections import namedtuple as _namedtuple
 from pathlib import Path as _Path
 import numpy as _np
 
-from deeplabcut.utils import auxiliaryfunctions as _aux
+from . import load_config as _load_config
 
 class EstimatedPosition(_namedtuple("_EstimatedPosition", ("x", "y", "prob"))):
     """a named tuple class for handling x-coord/y-coord/probability."""
@@ -42,7 +42,7 @@ class PostureMapper(_namedtuple("_PostureMapper", ("parts",))):
     def from_config(cls, cfg):
         """generates a mapper from a DLC config file."""
         if isinstance(cfg, (str, _Path)):
-            cfg = _aux.read_config(str(cfg))
+            cfg = _load_config(cfg)
         return cls(cfg["bodyparts"])
 
     def map(self, pose, dictclass=dict):

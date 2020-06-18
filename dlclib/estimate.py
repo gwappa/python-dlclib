@@ -33,6 +33,8 @@ import tensorflow as _tf
 from deeplabcut.utils import auxiliaryfunctions as _aux
 from deeplabcut.pose_estimation_tensorflow.nnet import predict as _predict
 
+from . import load_config as _load_config
+
 vers = (_tf.__version__).split('.')
 if int(vers[0])==1 and int(vers[1])>12:
     TF = _tf.compat.v1
@@ -88,7 +90,7 @@ def _get_snapshot(cfg, modelfolder, shuffle=1):
 
 def init_session(cfg, gputouse=None, shuffle=1, trainIndex=0):
     if isinstance(cfg, (str, _Path)):
-        cfg = _aux.read_config(str(cfg))
+        cfg = _load_config(cfg)
     TF.reset_default_graph()
 
     projpath      = cfg['project_path']
