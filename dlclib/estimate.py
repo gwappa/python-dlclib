@@ -31,7 +31,7 @@ import numpy as _np
 import tensorflow as _tf
 
 from deeplabcut.utils import auxiliaryfunctions as _aux
-from deeplabcut.pose_estimation_tensorflow.nnet import predict as _predict
+# from deeplabcut.pose_estimation_tensorflow.nnet import predict as _predict
 
 from . import load_config as _load_config
 
@@ -41,25 +41,113 @@ if int(vers[0])==1 and int(vers[1])>12:
 else:
     TF = _tf
 
-class TFSession(_namedtuple('_TFSession', ('config', 'session', 'input', 'output'))):
+class TFSession(_namedtuple('_TFSession',
+                                ('config',
+                                 'session',
+                                 'input',
+                                 'output',
+                                 'locate_on_gpu'))):
     @classmethod
-    def from_config(cls, cfg, gputouse=None, shuffle=1, trainIndex=0):
-        return init_session(cfg, gputouse=gputouse, shuffle=shuffle, trainIndex=trainIndex)
+    def from_config(cls, cfg, gputouse=None, shuffle=1, trainIndex=0, locate_on_gpu=False):
+        return init_session(cfg,
+                            gputouse=gputouse,
+                            shuffle=shuffle,
+                            trainIndex=trainIndex)
 
-    def get_pose(self, image, outall=False):
+    def get_pose(self, image):
         '''returns pose=(part1x, part1y, part1prob, part2x, part2y, ...)'''
         image = _np.expand_dims(image, axis=0).astype(float)
-        cfg, sess, inputs, outputs = self
+        cfg, sess, inputs, outputs, locate_on_gpu = self
         outputs_np = sess.run(outputs, feed_dict={inputs: image})
-        scmap, locref = _predict.extract_cnn_output(outputs_np, cfg)
-        pose = _predict.argmax_pose_predict(scmap, locref, cfg.stride)
-        if outall:
-            return scmap, locref, pose
+        if locate_on_gpu == True:
+            return outputs_np[0]
         else:
+            scmap, locref = _dlc_extract_cnn_output(outputs_np, cfg)
+            pose = _dlc_argmax_pose_predict(scmap, locref, cfg["stride"])
+            #if outall:
+            #    return scmap, locref, pose
+            #else:
             return pose
+
+def _dlc_setup_pose_prediction(cfg, locate_on_gpu=False):
+    """setting up TF session.
+
+    just copied from DLC1.11; "GPU-inference" part from DLC2.1 (may not work on DLC1.11)."""
+
+    from deeplabcut.pose_estimation_tensorflow.nnet.net_factory import pose_net
+    _tf.reset_default_graph()
+    inputs = _tf.placeholder(_tf.float32, shape=[cfg["batch_size"]   , None, None, 3])
+    net_heads = pose_net(cfg).test(inputs)
+
+    if locate_on_gpu == False:
+        outputs = [net_heads['part_prob']]
+        if cfg["location_refinement"] == True:
+            outputs.append(net_heads['locref'])
+    else:
+        #assuming batchsize 1 here!
+        probs   = _tf.squeeze(net_heads['part_prob'], axis=0)
+        locref  = _tf.squeeze(net_heads['locref'], axis=0)
+        l_shape = _tf.shape(probs)
+
+        locref  = _tf.reshape(locref, (l_shape[0]*l_shape[1], -1, 2))
+        probs   = _tf.reshape(probs , (l_shape[0]*l_shape[1], -1))
+        maxloc  = _tf.argmax(probs, axis=0)
+
+        l_shape = _tf.cast(l_shape, _tf.int64)
+        loc     = _tf.unravel_index(maxloc, (l_shape[0], l_shape[1]))
+        maxloc  = _tf.reshape(maxloc, (1, -1))
+        joints  = _tf.reshape(_tf.range(0, l_shape[2]), (1,-1))
+        indices = _tf.transpose(_tf.concat([maxloc, joints] , axis=0))
+
+        offset  = _tf.gather_nd(locref, indices)
+        offset  = _tf.gather(offset, [1,0], axis=1)
+        likelihood = _tf.reshape(_tf.gather_nd(probs, indices), (-1,1))
+
+        pose = self.cfg.stride*_tf.cast(_tf.transpose(loc), dtype=_tf.float32) + self.cfg.stride*0.5 + offset*self.cfg.locref_stdev
+        pose = _tf.concat([pose, likelihood], axis=1)
+
+        outputs = [pose]
+
+    restorer = _tf.train.Saver()
+    sess = _tf.Session()
+    sess.run(_tf.global_variables_initializer())
+    sess.run(_tf.local_variables_initializer())
+
+    # Restore variables from disk.
+    restorer.restore(sess, cfg["init_weights"])
+
+    return sess, inputs, outputs, locate_on_gpu
+
+def _dlc_extract_cnn_output(outputs_np, cfg):
+    ''' extract locref + scmap from network (juct copied from DLC1.11) '''
+    scmap = outputs_np[0]
+    scmap = _np.squeeze(scmap)
+    locref = None
+    if cfg["location_refinement"]:
+        locref = _np.squeeze(outputs_np[1])
+        shape  = locref.shape
+        locref = _np.reshape(locref, (shape[0], shape[1], -1, 2)) * cfg["locref_stdev"]
+    if len(scmap.shape)==2: #for single body part!
+        scmap = _np.expand_dims(scmap,axis=2)
+    return scmap, locref
+
+def _dlc_argmax_pose_predict(scmap, offmat, stride):
+    """Combine scoremat and offsets to the final pose. (just copied from DLC1.11)"""
+    num_joints = scmap.shape[2]
+    pose = []
+    for joint_idx in range(num_joints):
+        maxloc = _np.unravel_index(_np.argmax(scmap[:, :, joint_idx]),
+                                  scmap[:, :, joint_idx].shape)
+        offset = _np.array(offmat[maxloc][joint_idx])[::-1]
+        pos_f8 = (_np.array(maxloc).astype('float') * stride + 0.5 * stride +
+                  offset)
+        pose.append(_np.hstack((pos_f8[::-1],
+                               [scmap[maxloc][joint_idx]])))
+    return _np.array(pose)
 
 def _get_pose_config(cfg, modelfolder, shuffle=1, trainIndex=0):
     from deeplabcut.pose_estimation_tensorflow import config as _config
+
     projpath      = _Path(cfg["project_path"])
     pose_file     = modelfolder / 'test' / 'pose_cfg.yaml'
     try:
@@ -88,7 +176,7 @@ def _get_snapshot(cfg, modelfolder, shuffle=1):
     print("Using %s" % snapshot, "for model", modelfolder)
     return snapshot, __iteration(snapshot)
 
-def init_session(cfg, gputouse=None, shuffle=1, trainIndex=0):
+def init_session(cfg, gputouse=None, shuffle=1, trainIndex=0, locate_on_gpu=False):
     if isinstance(cfg, (str, _Path)):
         cfg = _load_config(cfg)
     TF.reset_default_graph()
@@ -107,4 +195,4 @@ def init_session(cfg, gputouse=None, shuffle=1, trainIndex=0):
     print('num_outputs = ', dlc_cfg['num_outputs'])
     DLCscorer = _aux.GetScorerName(cfg,shuffle,trainFraction,trainingsiterations=iteration)
 
-    return TFSession(dlc_cfg, *(_predict.setup_pose_prediction(dlc_cfg)))
+    return TFSession(dlc_cfg, *(_dlc_setup_pose_prediction(dlc_cfg, locate_on_gpu=locate_on_gpu)))
