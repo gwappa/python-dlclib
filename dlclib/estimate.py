@@ -26,11 +26,19 @@
 
 from collections import namedtuple as _namedtuple
 from pathlib import Path as _Path
+import warnings as _warnings
 
 import numpy as _np
-import tensorflow as _tf
 
+SHOW_WARNINGS = False
+
+if SHOW_WARNINGS == False:
+    _warnings.filterwarnings("ignore", category=DeprecationWarning, module="tensorflow")
+    _warnings.filterwarnings("ignore", category=FutureWarning, module="tensorflow")
+import tensorflow as _tf
 from deeplabcut.utils import auxiliaryfunctions as _aux
+from deeplabcut.pose_estimation_tensorflow.nnet.net_factory import pose_net as _pose_net
+from deeplabcut.pose_estimation_tensorflow import config as _config
 # from deeplabcut.pose_estimation_tensorflow.nnet import predict as _predict
 
 from . import load_config as _load_config
@@ -74,10 +82,9 @@ def _dlc_setup_pose_prediction(cfg, locate_on_gpu=False):
 
     just copied from DLC1.11; "GPU-inference" part from DLC2.1 (may not work on DLC1.11)."""
 
-    from deeplabcut.pose_estimation_tensorflow.nnet.net_factory import pose_net
     _tf.reset_default_graph()
     inputs = _tf.placeholder(_tf.float32, shape=[cfg["batch_size"]   , None, None, 3])
-    net_heads = pose_net(cfg).test(inputs)
+    net_heads = _pose_net(cfg).test(inputs)
 
     if locate_on_gpu == False:
         outputs = [net_heads['part_prob']]
@@ -146,8 +153,6 @@ def _dlc_argmax_pose_predict(scmap, offmat, stride):
     return _np.array(pose)
 
 def _get_pose_config(cfg, modelfolder, shuffle=1, trainIndex=0):
-    from deeplabcut.pose_estimation_tensorflow import config as _config
-
     projpath      = _Path(cfg["project_path"])
     pose_file     = modelfolder / 'test' / 'pose_cfg.yaml'
     try:
