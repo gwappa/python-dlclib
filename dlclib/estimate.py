@@ -1,7 +1,7 @@
 #
 # MIT License
 #
-# Copyright (c) 2020 Keisuke Sehara
+# Copyright (c) 2020-2021 Keisuke Sehara
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -39,7 +39,6 @@ import tensorflow as _tf
 from deeplabcut.utils import auxiliaryfunctions as _aux
 from deeplabcut.pose_estimation_tensorflow.nnet.net_factory import pose_net as _pose_net
 from deeplabcut.pose_estimation_tensorflow import config as _config
-# from deeplabcut.pose_estimation_tensorflow.nnet import predict as _predict
 
 from . import load_config as _load_config
 
@@ -62,6 +61,9 @@ class TFSession(_namedtuple('_TFSession',
                             shuffle=shuffle,
                             trainIndex=trainIndex,
                             locate_on_gpu=locate_on_gpu)
+
+    def open_writer(self, path, sep=","):
+        return _writer.CSVWriter(path, tfsession=self, sep=sep)
 
 class DirectTFSession(TFSession):
     def get_pose(self, image):
@@ -243,3 +245,5 @@ def init_session(cfg, gputouse=None, shuffle=1, trainIndex=0, locate_on_gpu=Fals
 
     cls = DirectTFSession if cfg["batch_size"] == 1 else BatchTFSession
     return cls(dlc_cfg, *(_dlc_setup_pose_prediction(dlc_cfg, locate_on_gpu=locate_on_gpu)))
+
+from . import writer as _writer

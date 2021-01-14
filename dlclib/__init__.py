@@ -1,7 +1,7 @@
 #
 # MIT License
 #
-# Copyright (c) 2020 Keisuke Sehara
+# Copyright (c) 2020-2021 Keisuke Sehara
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -32,4 +32,4 @@ def load_config(cfgpath):
     with open(cfgpath) as src:
         return _yaml.load(src)
 
-from . import estimate, posture
+from . import estimate, posture, writer
