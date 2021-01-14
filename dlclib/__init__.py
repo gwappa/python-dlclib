@@ -22,7 +22,7 @@
 # SOFTWARE.
 #
 
-VERSION_STR = "1.0.3"
+VERSION_STR = "1.1.0"
 __VERSION__ = VERSION_STR
 
 from ruamel.yaml import YAML as _YAML

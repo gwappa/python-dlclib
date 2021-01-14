@@ -60,8 +60,10 @@ class TFSession(_namedtuple('_TFSession',
         return init_session(cfg,
                             gputouse=gputouse,
                             shuffle=shuffle,
-                            trainIndex=trainIndex)
+                            trainIndex=trainIndex,
+                            locate_on_gpu=locate_on_gpu)
 
+class DirectTFSession(TFSession):
     def get_pose(self, image):
         '''returns pose=(part1x, part1y, part1prob, part2x, part2y, ...)'''
         image = _np.expand_dims(image, axis=0).astype(float)
@@ -69,6 +71,24 @@ class TFSession(_namedtuple('_TFSession',
         outputs_np = sess.run(outputs, feed_dict={inputs: image})
         if locate_on_gpu == True:
             return outputs_np[0]
+        else:
+            scmap, locref = _dlc_extract_cnn_output(outputs_np, cfg)
+            pose = _dlc_argmax_pose_predict(scmap, locref, cfg["stride"])
+            #if outall:
+            #    return scmap, locref, pose
+            #else:
+            return pose
+
+class BatchTFSession(TFSession):
+    def get_pose(self, images):
+        '''returns pose=(part1x, part1y, part1prob, part2x, part2y, ...)'''
+        if not isinstance(images, _np.ndarray):
+            images = _np.stack(images, axis=0)
+        images = images.astype(float)
+        cfg, sess, inputs, outputs, locate_on_gpu = self
+        outputs_np = sess.run(outputs, feed_dict={inputs: images})
+        if locate_on_gpu == True:
+            return outputs_np[0].reshape((cfg.batch_size, -1, 3), order='C')
         else:
             scmap, locref = _dlc_extract_cnn_output(outputs_np, cfg)
             pose = _dlc_argmax_pose_predict(scmap, locref, cfg["stride"])
@@ -91,28 +111,49 @@ def _dlc_setup_pose_prediction(cfg, locate_on_gpu=False):
         if cfg["location_refinement"] == True:
             outputs.append(net_heads['locref'])
     else:
-        #assuming batchsize 1 here!
-        probs   = _tf.squeeze(net_heads['part_prob'], axis=0)
-        locref  = _tf.squeeze(net_heads['locref'], axis=0)
-        l_shape = _tf.shape(probs)
+        if cfg["batch_size"] == 1:
+            #assuming batchsize 1 here!
+            probs   = _tf.squeeze(net_heads['part_prob'], axis=0)
+            locref  = _tf.squeeze(net_heads['locref'], axis=0)
+            l_shape = _tf.shape(probs)
 
-        locref  = _tf.reshape(locref, (l_shape[0]*l_shape[1], -1, 2))
-        probs   = _tf.reshape(probs , (l_shape[0]*l_shape[1], -1))
-        maxloc  = _tf.argmax(probs, axis=0)
+            locref  = _tf.reshape(locref, (l_shape[0]*l_shape[1], -1, 2))
+            probs   = _tf.reshape(probs , (l_shape[0]*l_shape[1], -1))
+            maxloc  = _tf.argmax(probs, axis=0)
 
-        l_shape = _tf.cast(l_shape, _tf.int64)
-        loc     = _tf.unravel_index(maxloc, (l_shape[0], l_shape[1]))
+            l_shape = _tf.cast(l_shape, _tf.int64)
+            n_totalparts = l_shape[2]
+
+        else: # batch_size > 1
+            locref  = net_heads['locref']
+            probs   = _tf.sigmoid(net_heads['part_prob'])
+            l_shape = _tf.shape(probs) # (batchsize, x, y, bodyparts)
+            locref  = _tf.reshape(locref, (l_shape[0],l_shape[1],l_shape[2],l_shape[3], 2))
+
+            #turn into x times y time bs * bpts
+            locref  = _tf.transpose(locref,[1,2,0,3,4])
+            probs   = _tf.transpose(probs,[1,2,0,3])
+
+            l_shape = _tf.shape(probs) # (x, y, batchsize, bodyparts)
+            locref  = _tf.reshape(locref, (l_shape[0]*l_shape[1], -1, 2))
+            probs   = _tf.reshape(probs , (l_shape[0]*l_shape[1], -1))
+            maxloc  = _tf.argmax(probs, axis=0)
+
+            l_shape = _tf.cast(l_shape, _tf.int64)
+            n_totalparts = l_shape[2] * l_shape[3]
+
+        loc     = _tf.unravel_index(maxloc, (l_shape[0], l_shape[1])) #tuple of max indices
         maxloc  = _tf.reshape(maxloc, (1, -1))
-        joints  = _tf.reshape(_tf.range(0, l_shape[2]), (1,-1))
+        joints  = _tf.reshape(_tf.range(0, n_totalparts), (1,-1))
         indices = _tf.transpose(_tf.concat([maxloc, joints] , axis=0))
 
+        # extract corresponding locref x and y as well as probability
         offset  = _tf.gather_nd(locref, indices)
         offset  = _tf.gather(offset, [1,0], axis=1)
         likelihood = _tf.reshape(_tf.gather_nd(probs, indices), (-1,1))
 
-        pose = self.cfg.stride*_tf.cast(_tf.transpose(loc), dtype=_tf.float32) + self.cfg.stride*0.5 + offset*self.cfg.locref_stdev
-        pose = _tf.concat([pose, likelihood], axis=1)
-
+        pose    = cfg.stride * _tf.cast(_tf.transpose(loc), dtype=_tf.float32) + cfg.stride*0.5 + offset*cfg.locref_stdev
+        pose    = _tf.concat([pose, likelihood], axis=1)
         outputs = [pose]
 
     restorer = _tf.train.Saver()
@@ -200,4 +241,5 @@ def init_session(cfg, gputouse=None, shuffle=1, trainIndex=0, locate_on_gpu=Fals
     print('num_outputs = ', dlc_cfg['num_outputs'])
     DLCscorer = _aux.GetScorerName(cfg,shuffle,trainFraction,trainingsiterations=iteration)
 
-    return TFSession(dlc_cfg, *(_dlc_setup_pose_prediction(dlc_cfg, locate_on_gpu=locate_on_gpu)))
+    cls = DirectTFSession if cfg["batch_size"] == 1 else BatchTFSession
+    return cls(dlc_cfg, *(_dlc_setup_pose_prediction(dlc_cfg, locate_on_gpu=locate_on_gpu)))
