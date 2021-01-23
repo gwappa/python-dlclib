@@ -1,5 +1,7 @@
 # python-dlclib
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4459239.svg)](https://doi.org/10.5281/zenodo.4459239)
+
 A wrapper of DeepLabCut for its ease of use.
 
 `dlclib` is supposed to work with almost all single-camera setups of all DLC versions.
@@ -63,3 +65,5 @@ with session.open_writer(path) as out:
 ## License
 
 2020-2021 Keisuke Sehara, the MIT License
+
+You can cite `dlclib` by using the DOI: https://doi.org/10.5281/zenodo.4459238
