@@ -38,7 +38,8 @@ setuptools.setup(
     author='Keisuke Sehara',
     author_email='keisuke.sehara@gmail.com',
     license='MIT',
-    install_requires=['ruamel.yaml'],
+    python_requires='>=3.6',
+    install_requires=['deeplabcut'],
     classifiers=[
         'Development Status :: 3 - Alpha',
         'License :: OSI Approved :: MIT License',
